@@ -1,0 +1,303 @@
+---
+title: "Riddler - Skip to next song"
+author: Ravi Chandrasekaran
+date: December 9, 2019
+output: html_document
+---
+
+https://fivethirtyeight.com/features/how-fast-can-you-skip-to-your-favorite-song/
+https://en.wikipedia.org/wiki/Negative_binomial_distribution#Waiting_time_in_a_Bernoulli_process
+
+```{r package_setup, echo = FALSE}
+options(tidyverse.quiet = TRUE) 
+library("tidyverse")
+```
+
+
+## General approach
+When we are very close to our desired target, our gut tells us we should
+be patient and hit "next" a few times. When we're ridiculously far away, our
+same gut says to hit "random" a few times, and hope that we get close. The
+question is how close is "close" -- when should we be patient, and when 
+should we try for better.
+
+## Closeness
+Let's say our threshold for closeness is $n$ -- that we are either on our
+desired square, or in the other $n - 1$ nearest, lesser squares. For example,
+if our target is 42, and our threshold was $n = 10$, then the "close" squares
+would include $33, 34, \dots, 42$. 
+
+If we land in the close squares, with all probabilities equal, then how many
+times would we expect to hit the next button? Well, if it's an equal chance
+for each of these close squares, then the expectation is a simple calc:
+
+\begin{align*}
+E[F] = & \frac{1}{2}(n - 1) \\
+\end{align*}
+
+
+## Random steps
+How many times would we expect to hit the "random" button before landing in the
+"close" zone? 
+
+Let's start by assuming the starting position is outside the "close" zone. 
+We're basically looking at a geometric distribution, then, where the 
+probability of failure and success is driven by the size of the closeness
+threshold. 
+
+What's our chance ($p$) -- of landing in the close zone? That's
+defined by our closeness threshold and the total number of squares we're 
+considering -- $p = n / N$. So, we can build up an equation entirely based 
+on the cutoff and total number of squares, below:
+
+\begin{align*}
+p = & \frac{n}{N} \\
+E[R \mid \text{not close}] = & \frac{1}{p}, && \text{from the geometric dist.} \\
+= & \frac{N}{n} \\
+\end{align*}
+
+Now, we had started by assuming we were *outside* the close zone. Of course, 
+if our starting position were lucky enough, we wouldn't have any random steps
+at all. So:
+
+\begin{align*}
+E[R] = & (1 - p) \cdot E[R \mid \text{not close}] + p \cdot E[R \mid \text{close}] \\
+= & (1 - \frac{n}{N}) \cdot \frac{N}{n} + \frac{N}{n} \cdot 0 \\
+= & (\frac{N - n}{N}) \cdot \frac{N}{n}  \\
+= & \frac{N - n}{n} \\
+= & \frac{N}{n} - 1 \\
+\end{align*}
+
+## Putting it together
+Our total number of expected steps is the sum of the expected random button 
+presses, and the expected number of forward button presses. These are both
+functions of the closeness threshold $n$, so once we have the formula, we'll
+want to find the $n$ that minimizes the number of steps.
+
+\begin{align*}
+E[S] = & E[R] + E[F] \\
+= & \frac{N}{n}  - 1 + \frac{1}{2}(n - 1) \\
+= & \frac{N}{n} +  \frac{n}{2}  + \frac{1}{2} \\
+\end{align*}
+
+This is enough for us to plot the expected steps at each value of the closeness
+threshold $n$. Here, we're first plotting all values, and then limiting it to 
+just those values close to the minimum. From here, we can eyeball the minimum
+at $n = 14$.
+
+
+```{r plot_exp_steps, echo = FALSE}
+library(ggrepel)
+exp_random_steps = function(n) { ((100 - n) / n) }
+exp_forward_steps = function(n) { 1/2 * (n - 1) }
+
+
+df <- tibble(
+  threshold = seq(1, 100),
+  random_steps = exp_random_steps(seq(1, 100)),
+  forward_steps = exp_forward_steps(seq(1, 100))
+  ) %>%
+  mutate(steps = random_steps + forward_steps)
+
+df %>%
+  filter(between(threshold, 10, 20)) %>%
+  ggplot(aes(threshold, steps)) +
+  geom_point(aes(col = steps == min(steps)), show.legend = FALSE) +
+  labs(title = "Expected steps at each 'closeness' threshold",
+       x = "'Closeness' threshold",
+       y = "Expected steps") +
+  theme_light() +
+  scale_x_continuous(
+    breaks = seq(0, 100), 
+    minor_breaks = seq(0, 100)) +
+  scale_color_manual(
+    labels = c("Minimum", "Not minimum"), 
+    values = c("purple", "orange"),
+    guide = guide_legend(reverse = TRUE)) +
+  geom_text_repel(
+    data = subset(df, steps == min(steps)), 
+    aes(label = round(steps, 1)),
+    size = 3) +
+  coord_cartesian(ylim = c(12, 14))
+```
+
+
+At our minimizing threshold, we get a pretty balanced mix of expected 
+random and forward steps:
+
+```{r breakdown_at_ideal_cutoff, echo = FALSE}
+
+df %>%
+  filter(threshold == 14) %>%
+  select(-threshold) %>%
+  gather(key = "metric") %>%
+  mutate(metric = str_to_sentence(str_replace_all(metric, "_", " ")))
+
+```
+
+Here we can see how that balance plays out for each possible value of the
+closeness threshold $n$. Not unexpectedly, when we give a crazy large threshold
+for closeness, the "next" buttons dominate, and that's a linear trend.
+
+```{r plot_balance, echo = FALSE}
+df %>%
+  select(-steps) %>%
+  gather(key = "type", value = "steps", -threshold) %>%
+  ggplot(aes(threshold, steps, fill = type)) +
+  geom_col() + 
+  theme_light() +
+  theme(
+    legend.position = c(.85, .85),
+    legend.title = element_blank()) +
+  labs(title = "Expected steps at each 'closeness' threshold",
+       x = "'Closeness' threshold",
+       y = "Expected steps") +
+  scale_x_continuous(breaks = seq(0, 100, 20)) +
+  scale_y_continuous(breaks = seq(0, 100, 20)) +
+  scale_fill_manual(
+    labels = c("Forward", "Random"), 
+    values = c("grey80", "lightblue"),
+    guide = guide_legend(reverse = TRUE))
+  
+```
+
+
+
+## Rule of thumb
+
+What do we do if our number of songs isn't $N = 100$, but some other value?
+We can use a little calc on our expected steps function to differentiate and 
+find the minimum of expected steps as a function of that value $N$.
+
+\begin{align*}
+E[S] = & \frac{N}{n} - 1 + \frac{1}{2}(n - 1) \\
+
+\frac{d}{dn}E[S] = & \frac{-N}{n^2} + 0 + \frac{1}{2} \\
+0 = & \frac{-N}{n^2} + \frac{1}{2} \\
+n^2 = & 2N \\
+n = & \sqrt{2N} \\
+\end{align*}
+
+\begin{align*}
+= & \sqrt{2 \cdot 100} \\
+= & `r round(sqrt(2 * 100), 2)` \\
+\end{align*}
+
+
+---
+
+
+## Does this hold up under trials?
+Enough maths. Let's try doing a whole bunch of trials with different
+cutoffs, and see what we find. 
+
+```{r perform_simulation, echo = FALSE, eval = FALSE}
+# Currently ignoring boundary condition, since threshold and target don't 
+# require it.
+steps <- function(x, threshold, target) {
+  if (x == target) { return(0) }
+  if (target - x >= 0 & target - x < threshold) { return(target - x) }
+  return(steps(as.integer(runif(1, min = 1, max = 100)), threshold, target) + 1)
+}
+
+trials <- expand_grid(
+  start = sample(1:100, size = 10000, replace = TRUE),
+  threshold = 5:30, 
+  target = 42) 
+
+trial_detail <- trials %>%
+  mutate(row_number = row_number()) %>%
+  nest(data = c(threshold, target, start)) %>%
+  mutate(steps = map(data, ~ steps(.x$start, .x$threshold, .x$target))) %>%
+  unnest(c(data, steps))
+```
+
+```{r load_simulation, eval = TRUE, echo = FALSE}
+# save(trial_detail, file = "riddler-2019-12-06-trial-detail.Rds")
+load("riddler-2019-12-06-trial-detail.Rds")
+```
+
+
+```{r evaluate_simulation, echo = FALSE}
+trial_summary <- trial_detail %>%
+  group_by(threshold) %>%
+  summarise(steps = mean(steps))
+
+trial_summary %>%
+  filter(between(threshold, 10, 20)) %>%
+  ggplot(aes(threshold, steps)) +
+  geom_point(aes(col = steps == min(steps)), show.legend = FALSE) +
+  labs(title = "Experimental steps for each closeness threshold",
+       x = "'Closeness' threshold",
+       y = "Mean number of steps") +
+  theme_light() +
+  coord_cartesian(ylim = c(12, 14)) +
+  scale_x_continuous(
+    breaks = seq(0, 100), 
+    minor_breaks = seq(0, 100)) +
+  labs(title = "Expected steps at each 'closeness' threshold",
+       x = "'Closeness' threshold",
+       y = "Expected steps") +
+  scale_color_manual(
+    labels = c("Minimum", "Not minimum"), 
+    values = c("purple", "orange"),
+    guide = guide_legend(reverse = TRUE)) +
+  geom_text(
+    data = subset(trial_summary, abs(steps - min(steps)) <= .1), 
+    aes(label = round(steps, 1)),
+    nudge_y = .1,
+    size = 3) 
+  
+
+```
+
+---
+
+
+
+```{r ridgeplot, echo = FALSE}
+library("ggridges")
+
+trial_detail %>%
+  filter(between(threshold, 10, 20)) %>%
+  ggplot(aes(steps, y = threshold, group = threshold)) +
+  geom_density_ridges(scale = 3, fill = "lightblue", color = "grey50") +
+  theme_light() +
+  labs(
+    title = "Densities for number of steps",
+    x = "Number of steps",
+    y = "Density") +
+  scale_y_continuous(breaks = seq(10, 20, 2)) +
+  coord_cartesian(xlim = c(0, 50))
+```
+
+
+```{r variance_trials, echo = FALSE}
+library("broom")
+
+# Later is lower variance
+trial_detail %>%
+  select(-row_number, -target, -start) %>%
+  nest(data = c(steps)) %>%
+  mutate(t_test = purrr::map(data, ~ broom::tidy(t.test(.x$steps)))) %>%
+  unnest(t_test) %>%
+  ggplot(aes(threshold, estimate)) + 
+  geom_point() +
+  geom_linerange(aes(ymin = conf.low, ymax = conf.high)) +
+  theme_light() +
+  labs(
+    title = "Point estimates and confidence intervals for expected steps", 
+    x = "'Closeness' threshold",
+    y = "Number of steps")
+
+```
+
+
+
+
+
+
+
+
+
+
